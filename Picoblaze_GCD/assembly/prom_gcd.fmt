@@ -1,0 +1,105 @@
+               ; KCPSM6 Program
+               ; Author         - Vikram & Chethan
+               ; File     - prom_gcd.psm
+               ; Original file was made in 2017. Reviewed in March 2013.
+               ;**************************************************************************************
+               ;Port definitions:
+               ; Comment: We have already provided all the ports with addresses. Make sure they match the top.
+               ;**************************************************************************************
+               CONSTANT Control_signal, 00       ;port00 used for loading info of Start, Step, Ack signals
+               CONSTANT Ain, 01                  ;port01 used for loading info of Ain
+               CONSTANT Bin, 02                  ;port02 used for loading info of Bin
+               CONSTANT A_Value, 00              ;port00 used for outputting A
+               CONSTANT B_Value, 01              ;port01 used for outputting B
+               CONSTANT AB_GCD, 02               ;port02 used for outputting AB_GCD
+               CONSTANT i_count, 03              ;port03 used for outputting i_count
+               CONSTANT Current_State, 04        ;port04 used for outputting current state info to LEDs
+               CONSTANT Control_Signal_Ack, 05   ;port05 used for outputting Ack for Start and Step Signals
+               ;**************************************************************************************
+               ; Special Register usage
+               ;**************************************************************************************
+               ;NAMEREG Not used here
+               ;**************************************************************************************
+               ;MAIN PROGRAM
+               ;**************************************************************************************
+               ;Control Signal Format in s8 {6'b000000,BtnU_Pulse_Reg,Start_Ack_Pulse_Reg} ; BtnU pulse indicates Step operation
+        start: ENABLE INTERRUPT
+               LOAD s0, 00                       ; Load register s0 00000000'b
+               LOAD s1, 01                       ; Load register s1 00000001'b  start/ack signal ack return signal
+               LOAD s2, 02                       ; Load register s2 00000010'b  step signal received ack return signal
+state_initial: OUTPUTK 00000001'b, Current_State ; Indicating Current State as Initial State
+               INPUT s3, Ain                     ; Register s3 holds Ain
+               INPUT s4, Bin                     ; Register s4 holds Bin
+               LOAD s5, 00                       ; Register s5 holds i_count
+               LOAD s6, AB_GCD                   ; Register s6 holds AB_GCD
+               LOAD s7, 00                       ; Temporary Register s7 for swapping A and B
+               INPUT s8, Control_signal          ; Load the Control Signal Information into register s8
+               AND s8, 00000001'b                ; Check to see if Start Control Signal is set using 00000001'b Mask
+               JUMP Z, state_initial             ; Jump back to state_initial and keep looking for the Start signal
+               OUTPUT s1, Control_Signal_Ack     ; Ack the start signal by setting the start_ack = 1
+               OUTPUT s0, Control_Signal_Ack     ; Reset the Acknowledge signal so start can be pressed again
+               JUMP state_SUB                    ; Jump to Subtract State if Start is pressed
+               ;***************************************************************************************
+               ;Subtract State
+               ;****************************************************************************************
+    state_SUB: OUTPUTK 00000010'b, Current_State ; TODO: Indicating Current State as Subtract State
+               OUTPUT s3, A_Value
+               OUTPUT s4, B_Value
+               INPUT s8, Control_signal          ; Load the Control Signal Information into register s8
+               AND s8, 00000010'b                ; Check to see if Step Control Signal is set using 00000010'b Mask
+               JUMP Z, state_SUB                 ; Keep looking for Step (BtnU_Pulse_Reg)
+               OUTPUT s2, Control_Signal_Ack     ; Ack the step signal by setting the step_ack = 1
+               OUTPUT s0, Control_Signal_Ack     ; Reset the Acknowledge signal so step can be pressed again
+               COMPARE s3, s4                    ; is s3 - s4 (compare)?
+               JUMP Z, assign_GCD                ; if equal jump to GCD Assignment
+               JUMP C, swap_AB                   ; If A < B, swap A and B
+               TEST s3, 01                       ; Since A > B, TEST - Carry flag is set if there are odd number of 1s in the temporary result
+               JUMP Z, A_Even                    ; A[0] is 0 => A is even
+               TEST s4, 01                       ; A is odd. Check for B
+               JUMP Z, A_Odd_B_Even              ; B[0] is 0 => B is even
+  A_Odd_B_Odd: SUB s3, s4                        ; A is Odd, B is Odd. A <= A - B;
+               JUMP state_SUB                    ; Now jump back to beginning of state_SUB
+       A_Even: TEST s4, 01                       ; A is even. Check for B
+               JUMP NZ, A_Even_B_Odd             ; B is Odd if Carry Set => Jump to A_Even_B_Odd
+A_Even_B_Even: ADD s5, 01                        ; i_count <= i_count + 1;
+               SR0 s3                            ; A <= A/2;
+               SR0 s4                            ; B <= B/2;
+               JUMP state_SUB                    ; Now jump back to beginning of state_SUB
+ A_Odd_B_Even: SR0 s4                            ; B <= B/2;
+               JUMP state_SUB                    ; Now jump back to beginning of state_SUB
+ A_Even_B_Odd: SR0 s3                            ; A <= A/2;
+               JUMP state_SUB                    ; Now jump back to beginning of state_SUB
+      swap_AB: LOAD s7, s3                       ; temp_reg = A
+               LOAD s3, s4                       ; A = B
+               LOAD s4, s7                       ; B = temp_reg
+               JUMP state_SUB
+   assign_GCD: LOAD s6, s3                       ; Load A as GCD
+               COMPARE s5, 00                    ; Check if i_count is 0 ; notice that we check if (i==0) in hardware also
+               JUMP Z, state_DONE                ; If i_count is 0 jump to done state
+               JUMP state_MULT                   ; if not jump to MULT state
+               ;****************************************************************************************
+               ;MULT State
+               ;****************************************************************************************
+   state_MULT: OUTPUTK 00000100'b, Current_State ; TODO: Indicating Current State as MULT State
+               OUTPUT s5, i_count
+               OUTPUT s6, AB_GCD
+               INPUT s8, Control_signal          ; Load the Control Signal Information into register s8
+               AND s8, 00000010'b                ; Check to see if Step Control Signal is set using 00000010'b Mask
+               JUMP Z, state_MULT                ; Wait till Step (BtnU_Pulse_Reg) is received
+               OUTPUT s2, Control_Signal_Ack     ; Ack the step signal by setting the step_ack = 1
+               OUTPUT s0, Control_Signal_Ack     ; Reset the Acknowledge signal so step can be pressed again
+               SL0 s6                            ; GCD = GCD*2
+               SUB s5, 01                        ; i_count = i_count - 1
+               JUMP NZ, state_MULT               ; Loop back to MULT state if i_count!=0; notice that we check if (i==1) in hardware
+               ;****************************************************************************************
+               ;Done State
+               ;****************************************************************************************
+   state_DONE: OUTPUTK 00001000'b, Current_State ; Indicating Current State as Done State
+               OUTPUT s5, i_count
+               OUTPUT s6, AB_GCD
+               INPUT s8, Control_signal          ; Load the Control Signal Information into register s8
+               AND s8, 00000001'b                ; Check to see if ACK is received
+               JUMP Z, state_DONE                ; Jump to state_initial until ACK is received
+               OUTPUT s1, Control_Signal_Ack     ; Ack the ACK signal by setting the start_ack = 1
+               OUTPUT s0, Control_Signal_Ack     ; Reset the Acknowledge signal so start can be pressed next in the state_initial
+               JUMP state_initial                ; Go to state_initial to start all over
